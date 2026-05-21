@@ -12,6 +12,8 @@ $DefaultConfig = [ordered]@{
     HighBatteryLimit = 80
     CheckIntervalSeconds = 30
     NotificationIntervalSeconds = 60
+    AlarmSoundDurationSeconds = 12
+    AlarmSoundVolumePercent = 100
 }
 
 function Save-DefaultConfig {
@@ -38,17 +40,96 @@ function Get-AppConfig {
     $high = [int]$config.HighBatteryLimit
     $check = [int]$config.CheckIntervalSeconds
     $notify = [int]$config.NotificationIntervalSeconds
+    $soundDuration = [int]$config.AlarmSoundDurationSeconds
+    $soundVolume = [int]$config.AlarmSoundVolumePercent
 
     if ($low -lt 1 -or $low -gt 99) { $low = $DefaultConfig.LowBatteryLimit }
     if ($high -lt 1 -or $high -gt 100) { $high = $DefaultConfig.HighBatteryLimit }
     if ($check -lt 5) { $check = $DefaultConfig.CheckIntervalSeconds }
     if ($notify -lt 10) { $notify = $DefaultConfig.NotificationIntervalSeconds }
+    if ($soundDuration -lt 1 -or $soundDuration -gt 60) { $soundDuration = $DefaultConfig.AlarmSoundDurationSeconds }
+    if ($soundVolume -lt 1 -or $soundVolume -gt 100) { $soundVolume = $DefaultConfig.AlarmSoundVolumePercent }
 
     [pscustomobject]@{
         LowBatteryLimit = $low
         HighBatteryLimit = $high
         CheckIntervalSeconds = $check
         NotificationIntervalSeconds = $notify
+        AlarmSoundDurationSeconds = $soundDuration
+        AlarmSoundVolumePercent = $soundVolume
+    }
+}
+
+function New-AlarmSoundFile($durationSeconds, $volumePercent) {
+    $safeDuration = [Math]::Max(1, [Math]::Min(60, [int]$durationSeconds))
+    $safeVolume = [Math]::Max(1, [Math]::Min(100, [int]$volumePercent))
+    $soundPath = Join-Path $AppDir ("alarm.{0}s.{1}pct.wav" -f $safeDuration, $safeVolume)
+
+    if (Test-Path -LiteralPath $soundPath) {
+        return $soundPath
+    }
+
+    $sampleRate = 44100
+    $bitsPerSample = 16
+    $channelCount = 1
+    $sampleCount = $sampleRate * $safeDuration
+    $blockAlign = [int]($channelCount * $bitsPerSample / 8)
+    $byteRate = $sampleRate * $blockAlign
+    $dataSize = $sampleCount * $blockAlign
+    $amplitude = [int16]([Int16]::MaxValue * 0.85 * ($safeVolume / 100.0))
+    $writer = $null
+
+    try {
+        $stream = [System.IO.File]::Open($soundPath, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+        $writer = New-Object System.IO.BinaryWriter($stream)
+
+        $writer.Write([System.Text.Encoding]::ASCII.GetBytes('RIFF'))
+        $writer.Write([int](36 + $dataSize))
+        $writer.Write([System.Text.Encoding]::ASCII.GetBytes('WAVE'))
+        $writer.Write([System.Text.Encoding]::ASCII.GetBytes('fmt '))
+        $writer.Write([int]16)
+        $writer.Write([int16]1)
+        $writer.Write([int16]$channelCount)
+        $writer.Write([int]$sampleRate)
+        $writer.Write([int]$byteRate)
+        $writer.Write([int16]$blockAlign)
+        $writer.Write([int16]$bitsPerSample)
+        $writer.Write([System.Text.Encoding]::ASCII.GetBytes('data'))
+        $writer.Write([int]$dataSize)
+
+        for ($i = 0; $i -lt $sampleCount; $i++) {
+            $elapsed = $i / $sampleRate
+            $cyclePosition = $elapsed % 0.7
+            $frequency = if ($cyclePosition -lt 0.35) { 880 } else { 660 }
+            $gate = if (($elapsed % 1.4) -lt 1.15) { 1.0 } else { 0.0 }
+            $sample = [int16]($amplitude * $gate * [Math]::Sin(2 * [Math]::PI * $frequency * $elapsed))
+            $writer.Write($sample)
+        }
+    }
+    finally {
+        if ($writer -ne $null) {
+            $writer.Dispose()
+        }
+    }
+
+    return $soundPath
+}
+
+function Play-AlarmSound {
+    try {
+        $soundPath = New-AlarmSoundFile $Config.AlarmSoundDurationSeconds $Config.AlarmSoundVolumePercent
+
+        if ($script:AlarmPlayer -ne $null) {
+            $script:AlarmPlayer.Stop()
+            $script:AlarmPlayer.Dispose()
+        }
+
+        $script:AlarmPlayer = New-Object System.Media.SoundPlayer($soundPath)
+        $script:AlarmPlayer.Load()
+        $script:AlarmPlayer.Play()
+    }
+    catch {
+        [System.Media.SystemSounds]::Exclamation.Play()
     }
 }
 
@@ -65,6 +146,7 @@ function Get-BatterySnapshot {
 $Config = Get-AppConfig
 $LastNotificationAt = [DateTime]::MinValue
 $LastAlarmKind = ''
+$AlarmPlayer = $null
 
 $Context = New-Object System.Windows.Forms.ApplicationContext
 $Icon = New-Object System.Windows.Forms.NotifyIcon
@@ -92,6 +174,7 @@ function Show-Notice($title, $message) {
     $Icon.BalloonTipText = $message
     $Icon.BalloonTipIcon = [System.Windows.Forms.ToolTipIcon]::Warning
     $Icon.ShowBalloonTip(10000)
+    Play-AlarmSound
 }
 
 function Update-StatusText($snapshot) {
@@ -149,6 +232,11 @@ $ReloadItem.Add_Click({
 })
 
 $ExitItem.Add_Click({
+    if ($script:AlarmPlayer -ne $null) {
+        $script:AlarmPlayer.Stop()
+        $script:AlarmPlayer.Dispose()
+    }
+
     $Icon.Visible = $false
     $Icon.Dispose()
     $Context.ExitThread()

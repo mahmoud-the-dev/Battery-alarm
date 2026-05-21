@@ -4,9 +4,10 @@ A small Windows background tray app that reminds you to plug or unplug the charg
 
 ## Behavior
 
-- If the charger is unplugged and battery is at or below `LowBatteryLimit`, it sends a notification every minute until the charger is plugged in.
-- If the charger is plugged in and battery is at or above `HighBatteryLimit`, it sends a notification every minute until the charger is unplugged.
+- If the charger is unplugged and battery is at or below `LowBatteryLimit`, it sends a notification and plays a loud alarm sound every minute until the charger is plugged in.
+- If the charger is plugged in and battery is at or above `HighBatteryLimit`, it sends a notification and plays a loud alarm sound every minute until the charger is unplugged.
 - The app runs in the Windows notification area. Right-click the tray icon to reload config or exit.
+- The alarm sound is generated automatically as a WAV file in the app folder the first time it is needed.
 
 ## Run
 
@@ -23,11 +24,15 @@ Edit `config.json`:
   "LowBatteryLimit": 20,
   "HighBatteryLimit": 80,
   "CheckIntervalSeconds": 30,
-  "NotificationIntervalSeconds": 60
+  "NotificationIntervalSeconds": 60,
+  "AlarmSoundDurationSeconds": 12,
+  "AlarmSoundVolumePercent": 100
 }
 ```
 
 Right-click the tray icon and choose `Reload config` after changing the file.
+
+`AlarmSoundDurationSeconds` can be set from `1` to `60`. `AlarmSoundVolumePercent` can be set from `1` to `100`.
 
 ## Start With Windows
 
