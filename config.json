@@ -1,0 +1,6 @@
+{
+  "LowBatteryLimit": 40,
+  "HighBatteryLimit": 80,
+  "CheckIntervalSeconds": 30,
+  "NotificationIntervalSeconds": 60
+}
