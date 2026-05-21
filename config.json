@@ -4,5 +4,6 @@
   "CheckIntervalSeconds": 30,
   "NotificationIntervalSeconds": 60,
   "AlarmSoundDurationSeconds": 12,
-  "AlarmSoundVolumePercent": 100
+  "AlarmSoundVolumePercent": 100,
+  "SnoozeMinutes": 5
 }
