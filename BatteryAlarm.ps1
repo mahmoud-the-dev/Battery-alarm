@@ -64,10 +64,11 @@ function Get-AppConfig {
     }
 }
 
-function New-AlarmSoundFile($durationSeconds, $volumePercent) {
+function New-AlarmSoundFile($durationSeconds, $volumePercent, $alarmKind) {
     $safeDuration = [Math]::Max(1, [Math]::Min(60, [int]$durationSeconds))
     $safeVolume = [Math]::Max(1, [Math]::Min(100, [int]$volumePercent))
-    $soundPath = Join-Path $AppDir ("alarm.{0}s.{1}pct.wav" -f $safeDuration, $safeVolume)
+    $soundName = if ($alarmKind -eq 'HighBattery') { 'alarm.full' } else { 'alarm.low' }
+    $soundPath = Join-Path $AppDir ("{0}.{1}s.{2}pct.wav" -f $soundName, $safeDuration, $safeVolume)
 
     if (Test-Path -LiteralPath $soundPath) {
         return $soundPath
@@ -103,10 +104,31 @@ function New-AlarmSoundFile($durationSeconds, $volumePercent) {
 
         for ($i = 0; $i -lt $sampleCount; $i++) {
             $elapsed = $i / $sampleRate
-            $cyclePosition = $elapsed % 0.7
-            $frequency = if ($cyclePosition -lt 0.35) { 880 } else { 660 }
-            $gate = if (($elapsed % 1.4) -lt 1.15) { 1.0 } else { 0.0 }
-            $sample = [int16]($amplitude * $gate * [Math]::Sin(2 * [Math]::PI * $frequency * $elapsed))
+            if ($alarmKind -eq 'HighBattery') {
+                # High Battery: Pleasant, clean, high-pitched sine-wave chime (triple-chirp)
+                $cyclePosition = $elapsed % 0.8
+                if ($cyclePosition -lt 0.05) {
+                    $frequency = 1600
+                    $gate = 1.0
+                } elseif ($cyclePosition -ge 0.10 -and $cyclePosition -lt 0.15) {
+                    $frequency = 1800
+                    $gate = 1.0
+                } elseif ($cyclePosition -ge 0.20 -and $cyclePosition -lt 0.25) {
+                    $frequency = 2000
+                    $gate = 1.0
+                } else {
+                    $frequency = 1000
+                    $gate = 0.0
+                }
+                $sample = [int16]($amplitude * $gate * [Math]::Sin(2 * [Math]::PI * $frequency * $elapsed))
+            }
+            else {
+                # Low Battery: Original alternating frequency beep warning
+                $cyclePosition = $elapsed % 0.7
+                $frequency = if ($cyclePosition -lt 0.35) { 880 } else { 660 }
+                $gate = if (($elapsed % 1.4) -lt 1.15) { 1.0 } else { 0.0 }
+                $sample = [int16]($amplitude * $gate * [Math]::Sin(2 * [Math]::PI * $frequency * $elapsed))
+            }
             $writer.Write($sample)
         }
     }
@@ -119,9 +141,9 @@ function New-AlarmSoundFile($durationSeconds, $volumePercent) {
     return $soundPath
 }
 
-function Play-AlarmSound {
+function Play-AlarmSound($alarmKind) {
     try {
-        $soundPath = New-AlarmSoundFile $Config.AlarmSoundDurationSeconds $Config.AlarmSoundVolumePercent
+        $soundPath = New-AlarmSoundFile $Config.AlarmSoundDurationSeconds $Config.AlarmSoundVolumePercent $alarmKind
 
         Stop-AlarmSound
 
@@ -179,12 +201,12 @@ $ExitItem.Text = 'Exit'
 [void]$Menu.Items.Add($ExitItem)
 $Icon.ContextMenuStrip = $Menu
 
-function Show-Notice($title, $message) {
+function Show-Notice($title, $message, $alarmKind) {
     $Icon.BalloonTipTitle = $title
     $Icon.BalloonTipText = $message
     $Icon.BalloonTipIcon = [System.Windows.Forms.ToolTipIcon]::Warning
     $Icon.ShowBalloonTip(10000)
-    Play-AlarmSound
+    Play-AlarmSound $alarmKind
 }
 
 function Snooze-Alarm {
@@ -237,13 +259,13 @@ function Test-Battery {
         $script:SnoozedUntil = [DateTime]::MinValue
         $secondsSinceLastNotice = ($now - $script:LastNotificationAt).TotalSeconds
         if ($alarmKind -ne $script:LastAlarmKind -or $secondsSinceLastNotice -ge $Config.NotificationIntervalSeconds) {
-            Show-Notice $title $message
+            Show-Notice $title $message $alarmKind
             $script:LastAlarmKind = $alarmKind
             $script:LastNotificationAt = $now
         }
     }
     catch {
-        Show-Notice 'Battery Alarm error' $_.Exception.Message
+        Show-Notice 'Battery Alarm error' $_.Exception.Message ''
     }
 }
 
